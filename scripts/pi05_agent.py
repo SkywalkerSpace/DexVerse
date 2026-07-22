@@ -54,6 +54,10 @@ parser.add_argument("--chunk_size", type=int, default=1,
                     help="If π₀.₅ outputs action chunks, set this to chunk size.")
 parser.add_argument("--exec_horizon", type=int, default=1,
                     help="Steps to execute per π₀.₅ inference call.")
+parser.add_argument(
+    "--disable_fabric", action="store_true", default=False,
+    help="Disable fabric and use USD I/O operations."
+)
 args = parser.parse_args()
 
 # 启动 Isaac Sim（headless 模式省显存）

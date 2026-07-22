@@ -9,6 +9,12 @@ Server is started separately with:
       --policy.dir=<your_checkpoint_dir>
 """
 
+"""
+Pi05Client — WebSocket client for openpi serve_policy.py
+协议: ws://host:port, 消息用 msgpack 编码
+
+pip install msgpack msgpack-numpy websocket-client opencv-python
+"""
 from __future__ import annotations
 
 import base64
@@ -16,90 +22,80 @@ import logging
 from typing import Any
 
 import numpy as np
-import requests
 
 log = logging.getLogger(__name__)
 
+try:
+    import msgpack
+    import msgpack_numpy as m
+    m.patch()                          # 让 msgpack 能序列化 numpy array
+except ImportError:
+    raise ImportError("pip install msgpack msgpack-numpy")
 
-def _encode_image(arr: np.ndarray) -> str:
-    """HWC uint8 ndarray → base64 JPEG string（openpi server 期望的格式）。"""
-    import cv2  # lazy import，不强依赖
-    _, buf = cv2.imencode(".jpg", cv2.cvtColor(arr, cv2.COLOR_RGB2BGR),
-                          [cv2.IMWRITE_JPEG_QUALITY, 95])
-    return base64.b64encode(buf.tobytes()).decode()
+try:
+    import websocket                   # websocket-client (sync)
+except ImportError:
+    raise ImportError("pip install websocket-client")
 
 
 class Pi05Client:
-    """
-    最小化的 openpi HTTP 客户端。
-    openpi serve_policy.py 暴露的接口是 POST /act，payload 格式：
-    {
-        "observation": {
-            "images": {"<cam_name>": "<base64 jpg>", ...},
-            "state":  [float, ...]          # 机器人关节状态
-        },
-        "language_instruction": "pick up the ball"
-    }
-    返回：
-    {
-        "action": [float, ...]              # 关节位置目标
-    }
-    注意：openpi 0.1.x 实际用 msgpack over websocket，但 serve_policy 也提供 REST。
-    如果你的版本只有 websocket，改用 openpi_client 库（见 NOTE 2）。
-    """
+    """Synchronous WebSocket client for openpi policy server."""
 
-    def __init__(
-        self,
-        host: str = "localhost",
-        port: int = 8000,
-        timeout: float = 10.0,
-    ):
-        self.base_url = f"http://{host}:{port}"
-        self.timeout = timeout
-        self._check_server()
+    def __init__(self, host: str = "localhost", port: int = 8000):
+        url = f"ws://{host}:{port}"
+        log.info(f"Connecting to openpi server at {url} ...")
+        self._ws = websocket.WebSocket()
+        self._ws.connect(url)
+        log.info("WebSocket connected.")
 
-    def _check_server(self) -> None:
-        """等服务器就绪再继续。"""
-        import time
-        for _ in range(30):
-            try:
-                r = requests.get(f"{self.base_url}/health", timeout=2.0)
-                if r.status_code == 200:
-                    log.info("π₀.₅ server is ready.")
-                    return
-            except requests.exceptions.ConnectionError:
-                pass
-            log.info("Waiting for π₀.₅ server...")
-            time.sleep(2.0)
-        raise RuntimeError(
-            f"Cannot connect to π₀.₅ server at {self.base_url}. "
-            "Did you start serve_policy.py?"
-        )
-
+    # ------------------------------------------------------------------
     def infer(
         self,
-        images: dict[str, np.ndarray],   # {"wrist": HWC_uint8, "overhead": HWC_uint8, ...}
-        state: np.ndarray,                # (N,) joint positions / velocities
+        images: dict[str, np.ndarray],   # {"cam_high": (H,W,3), ...}
+        state: np.ndarray,                # (state_dim,) float32
         instruction: str,
     ) -> np.ndarray:
         """
-        Returns action array of shape (action_dim,).
-        action_dim 取决于你 fine-tune 的 config（Shadow Hand ≈ 24-DOF）。
+        发送一帧 observation，返回 action array。
+        返回形状取决于 server 配置：
+          单步: (action_dim,)
+          chunk: (chunk_size, action_dim)
         """
-        payload = {
+        # ── 编码图像为 bytes（openpi server 期望 PNG/JPEG bytes 或 raw ndarray）
+        encoded_images: dict[str, bytes] = {}
+        for cam_name, img in images.items():
+            # img: uint8 (H, W, 3)
+            import cv2
+            _, buf = cv2.imencode(".jpg", img[..., ::-1])   # RGB→BGR for cv2
+            encoded_images[cam_name] = buf.tobytes()
+
+        obs = {
             "observation": {
-                "images": {k: _encode_image(v) for k, v in images.items()},
-                "state": state.tolist(),
+                "images": encoded_images,
+                "state":  state.astype(np.float32),
             },
-            "language_instruction": instruction,
+            "prompt": instruction,
         }
-        resp = requests.post(
-            f"{self.base_url}/act",
-            json=payload,
-            timeout=self.timeout,
-        )
-        resp.raise_for_status()
-        return np.array(resp.json()["action"], dtype=np.float32)
+
+        payload = msgpack.packb(obs, use_bin_type=True)
+        self._ws.send_binary(payload)
+
+        raw = self._ws.recv()
+        response = msgpack.unpackb(raw, raw=False)
+
+        # response["actions"]: list or ndarray, shape (chunk_size, action_dim)
+        actions = np.array(response["actions"], dtype=np.float32)
+        return actions
+
+    # ------------------------------------------------------------------
+    def close(self):
+        self._ws.close()
+
+    def __del__(self):
+        try:
+            self._ws.close()
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # NOTE 1: openpi 的 chunk action（diffusion 输出多步）
