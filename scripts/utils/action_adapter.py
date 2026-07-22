@@ -26,8 +26,8 @@ import torch
 # ──────────────────────────────────────────────────────────────────────────────
 # 修改这两个值以匹配你的实际配置
 # ──────────────────────────────────────────────────────────────────────────────
-PI05_ACTION_DIM = 24       # π₀.₅ 输出维度（fine-tune 后）
-DEXVERSE_ACTION_DIM = 24   # DexVerse Shadow Hand joint position targets
+PI05_ACTION_DIM = 14       # π₀.₅ 输出维度（fine-tune 后）
+DEXVERSE_ACTION_DIM = 14   # DexVerse Shadow Hand joint position targets
 
 
 def pi05_action_to_dexverse(
@@ -45,20 +45,19 @@ def pi05_action_to_dexverse(
 
     但要 clip 到合法关节范围，防止物理模拟爆炸。
     """
-    assert len(pi05_action) == PI05_ACTION_DIM, (
-        f"π₀.₅ action dim {len(pi05_action)} ≠ expected {PI05_ACTION_DIM}. "
-        "Check your checkpoint config."
-    )
 
-    # 关节顺序重映射（如果 π₀.₅ 和 DexVerse 的关节顺序不同，在这里改）
+    # flatten：(1, 56) → (56,)，再取前 PI05_ACTION_DIM 维
+    low  = action_space_low.flatten()[:PI05_ACTION_DIM]
+    high = action_space_high.flatten()[:PI05_ACTION_DIM]
+
     action_reordered = _remap_joints(pi05_action)
+    action_clipped   = np.clip(action_reordered, low, high)
 
-    # clip 到关节范围
-    action_clipped = np.clip(action_reordered, action_space_low, action_space_high)
+    # 不足 56 维时，其余关节用 0 填充
+    full_action = np.zeros(action_space_low.flatten().shape, dtype=np.float32)
+    full_action[:PI05_ACTION_DIM] = action_clipped
 
-    # 扩展到 [num_envs, action_dim]（评估时只跑一个 env）
-    action_batch = np.tile(action_clipped[None, :], (num_envs, 1))
-
+    action_batch = np.tile(full_action[None, :], (num_envs, 1))
     return torch.from_numpy(action_batch).float()
 
 

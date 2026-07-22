@@ -44,7 +44,8 @@ import torch
 
 # 相机名 → Isaac Lab obs key 的映射（根据你的 task config 修改）
 CAMERA_KEY_MAP: dict[str, str] = {
-    "cam_high":        "overhead_cam",
+    "cam_high":        "overhead_cam",    # π₀.₅ key → DexVerse obs key
+    "cam_low":         "wrist_cam",       # cam_low 是必须的，ALOHA 里作为 base_image 备用
     "cam_left_wrist":  "left_wrist_cam",
     "cam_right_wrist": "right_wrist_cam",
 }
@@ -98,9 +99,17 @@ def obs_to_pi05(
 
         images[pi05_name] = img_np
 
+    REQUIRED_CAMERAS = ("cam_high", "cam_low", "cam_left_wrist", "cam_right_wrist")
+
+    for cam in REQUIRED_CAMERAS:
+        if cam not in images:
+            images[cam] = np.zeros((3, 224, 224), dtype=np.uint8)  # CHW 黑图
+
     # 本体感知
     prop = obs[PROPRIOCEPTION_KEY][env_idx]  # (obs_dim,)
     state = prop.cpu().numpy().astype(np.float32)
+
+    state = state[:14]
 
     return images, state
 
