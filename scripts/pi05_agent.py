@@ -60,7 +60,10 @@ parser.add_argument("--exec_horizon", type=int, default=1,
 args = parser.parse_args()
 
 # 启动 Isaac Sim（headless 模式省显存）
-app_launcher = isaaclab.app.AppLauncher(headless=args.headless)
+from isaaclab.app import AppLauncher
+AppLauncher.add_app_launcher_args(parser)   # 把 isaaclab 标准 cli args 加进去
+args_cli, hydra_args = parser.parse_known_args()
+app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
 # ── 以下 import 必须在 SimulationApp 启动之后 ─────────────────────────────────
@@ -70,7 +73,10 @@ import numpy as np
 from tqdm import tqdm
 
 # DexVerse 任务注册（import 触发注册）
-import dexverse  # noqa: F401
+import dexverse.tasks  # noqa: F401
+import isaaclab_tasks  # noqa: F401
+
+from dexverse.tasks.utils import parse_env_cfg
 
 # 本地 utils
 sys.path.insert(0, str(Path(__file__).parent))
@@ -85,7 +91,13 @@ log = logging.getLogger(__name__)
 def run_evaluation() -> None:
     # ── 1. 创建环境 ──────────────────────────────────────────────────────────
     log.info(f"Creating DexVerse env: {args.task}  ({args.num_envs} parallel)")
-    env = gym.make(args.task, num_envs=args.num_envs)
+    env_cfg = parse_env_cfg(
+        args_cli.task,
+        device=args_cli.device,
+        num_envs=args_cli.num_envs,
+        use_fabric=not args_cli.disable_fabric,
+    )
+    env = gym.make(args_cli.task, cfg=env_cfg)
 
     action_low = env.action_space.low    # (action_dim,)
     action_high = env.action_space.high  # (action_dim,)
