@@ -44,8 +44,9 @@ import torch
 
 # 相机名 → Isaac Lab obs key 的映射（根据你的 task config 修改）
 CAMERA_KEY_MAP: dict[str, str] = {
-    "cam_low": "wrist_cam",       # π₀.₅ cam name → DexVerse obs key
-    "cam_high": "overhead_cam",
+    "cam_high":        "overhead_cam",
+    "cam_left_wrist":  "left_wrist_cam",
+    "cam_right_wrist": "right_wrist_cam",
 }
 
 # 本体感知在 obs dict 里的 key
@@ -81,9 +82,9 @@ def obs_to_pi05(
         img_np = img_tensor.cpu().numpy()
         if img_np.dtype != np.uint8:
             img_np = (img_np * 255).clip(0, 255).astype(np.uint8)
-        if img_np.ndim == 3 and img_np.shape[0] in (1, 3, 4):
-            # CHW → HWC
-            img_np = img_np.transpose(1, 2, 0)
+        if img_np.ndim == 3 and img_np.shape[2] in (3, 4):
+            # HWC → CHW
+            img_np = img_np.transpose(2, 0, 1)
         if img_np.shape[2] == 4:
             img_np = img_np[:, :, :3]  # RGBA → RGB
 

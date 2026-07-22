@@ -7,92 +7,54 @@ Server is started separately with:
       policy:checkpoint \
       --policy.config=pi05_aloha_towel \   # 换成你 fine-tune 的 config
       --policy.dir=<your_checkpoint_dir>
-
-Pi05Client — WebSocket client for openpi serve_policy.py
-协议: ws://host:port, 消息用 msgpack 编码
-sc
-pip install msgpack msgpack-numpy websocket-client opencv-python
+π₀.₅ Policy Client — 使用 openpi 官方 WebSocket client
+pip install 见 openpi/README，或直接用 openpi 仓库里的 client
 """
 from __future__ import annotations
 
-import base64
 import logging
-from typing import Any
-
 import numpy as np
 
 log = logging.getLogger(__name__)
 
 try:
-    import msgpack
-    import msgpack_numpy as m
-    m.patch()                          # 让 msgpack 能序列化 numpy array
+    from openpi_client import websocket_client_policy as wcp
 except ImportError:
-    raise ImportError("pip install msgpack msgpack-numpy")
-
-try:
-    import websocket                   # websocket-client (sync)
-except ImportError:
-    raise ImportError("pip install websocket-client")
+    raise ImportError(
+        "需要 openpi_client 包。在 openpi 仓库目录下执行：\n"
+        "  uv pip install -e packages/openpi-client"
+    )
 
 
 class Pi05Client:
-    """Synchronous WebSocket client for openpi policy server."""
+    """用 openpi 官方 WebSocket client 对接 serve_policy.py"""
 
     def __init__(self, host: str = "localhost", port: int = 8000):
-        url = f"ws://{host}:{port}"
-        log.info(f"Connecting to openpi server at {url} ...")
-        self._ws = websocket.WebSocket()
-        self._ws.connect(url)
-        log.info("WebSocket connected.")
+        log.info(f"Connecting to openpi server at {host}:{port} ...")
+        self._client = wcp.WebsocketClientPolicy(host=host, port=port)
+        log.info("Connected.")
 
-    # ------------------------------------------------------------------
     def infer(
         self,
-        images: dict[str, np.ndarray],   # {"cam_high": (H,W,3), ...}
-        state: np.ndarray,                # (state_dim,) float32
+        images: dict[str, np.ndarray],  # CHW uint8，key 必须是 ALOHA 的相机名
+        state: np.ndarray,              # (14,) float32
         instruction: str,
     ) -> np.ndarray:
         """
-        发送一帧 observation，返回 action array。
-        返回形状取决于 server 配置：
-          单步: (action_dim,)
-          chunk: (chunk_size, action_dim)
+        返回 shape: (action_horizon, 14)
+        取 [0] 即当前步的 action
         """
-        # ── 编码图像为 bytes（openpi server 期望 PNG/JPEG bytes 或 raw ndarray）
-        encoded_images: dict[str, bytes] = {}
-        for cam_name, img in images.items():
-            # img: uint8 (H, W, 3)
-            import cv2
-            _, buf = cv2.imencode(".jpg", img[..., ::-1])   # RGB→BGR for cv2
-            encoded_images[cam_name] = buf.tobytes()
-
         obs = {
-            "images": encoded_images,
-            "state":  state.astype(np.float32),
+            "images": images,           # server 期望 CHW uint8
+            "state":  state,
             "prompt": instruction,
         }
+        result = self._client.infer(obs)
+        # result["actions"]: (action_horizon, 14)
+        return np.array(result["actions"], dtype=np.float32)
 
-        payload = msgpack.packb(obs, use_bin_type=True)
-        self._ws.send_binary(payload)
-
-        raw = self._ws.recv()
-        response = msgpack.unpackb(raw, raw=False)
-
-        # response["actions"]: list or ndarray, shape (chunk_size, action_dim)
-        actions = np.array(response["actions"], dtype=np.float32)
-        return actions
-
-    # ------------------------------------------------------------------
     def close(self):
-        self._ws.close()
-
-    def __del__(self):
-        try:
-            self._ws.close()
-        except Exception:
-            pass
-
+        pass  # openpi client 无需显式关闭
     # ------------------------------------------------------------------
     # NOTE 1: openpi 的 chunk action（diffusion 输出多步）
     # serve_policy 默认会输出单步 action（已经在 server 端做了 temporal
