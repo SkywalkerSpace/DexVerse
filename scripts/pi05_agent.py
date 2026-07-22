@@ -15,8 +15,7 @@ Usage（两个终端）:
       --task DexVerse-ShadowHand-PickCube-v0 \
       --num_envs 1 \
       --instruction "pick up the red cube" \
-      --num_episodes 10 \
-      --headless
+      --num_episodes 10
 
 显存管理:
   π₀.₅ server 用 XLA_PYTHON_CLIENT_MEM_FRACTION=0.5 限制 JAX 预分配，
@@ -49,8 +48,6 @@ parser.add_argument("--num_episodes", type=int, default=5,
                     help="How many episodes to evaluate.")
 parser.add_argument("--max_steps", type=int, default=300,
                     help="Max steps per episode.")
-parser.add_argument("--headless", action="store_true",
-                    help="Run without GUI (saves ~0.5GB VRAM).")
 parser.add_argument("--server_host", type=str, default="localhost")
 parser.add_argument("--server_port", type=int, default=8000)
 parser.add_argument("--chunk_size", type=int, default=1,
