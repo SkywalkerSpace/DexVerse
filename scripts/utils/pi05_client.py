@@ -7,12 +7,10 @@ Server is started separately with:
       policy:checkpoint \
       --policy.config=pi05_aloha_towel \   # 换成你 fine-tune 的 config
       --policy.dir=<your_checkpoint_dir>
-"""
 
-"""
 Pi05Client — WebSocket client for openpi serve_policy.py
 协议: ws://host:port, 消息用 msgpack 编码
-
+sc
 pip install msgpack msgpack-numpy websocket-client opencv-python
 """
 from __future__ import annotations

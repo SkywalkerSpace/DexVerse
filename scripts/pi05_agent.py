@@ -64,6 +64,7 @@ args = parser.parse_args()
 from isaaclab.app import AppLauncher
 AppLauncher.add_app_launcher_args(parser)   # 把 isaaclab 标准 cli args 加进去
 args_cli, hydra_args = parser.parse_known_args()
+args_cli.enable_cameras = True
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
