@@ -68,10 +68,8 @@ class Pi05Client:
             encoded_images[cam_name] = buf.tobytes()
 
         obs = {
-            "observation": {
-                "images": encoded_images,
-                "state":  state.astype(np.float32),
-            },
+            "images": encoded_images,
+            "state":  state.astype(np.float32),
             "prompt": instruction,
         }
 

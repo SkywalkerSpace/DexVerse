@@ -44,8 +44,8 @@ import torch
 
 # 相机名 → Isaac Lab obs key 的映射（根据你的 task config 修改）
 CAMERA_KEY_MAP: dict[str, str] = {
-    "wrist": "wrist_cam",       # π₀.₅ cam name → DexVerse obs key
-    "overhead": "overhead_cam",
+    "cam_low": "wrist_cam",       # π₀.₅ cam name → DexVerse obs key
+    "cam_high": "overhead_cam",
 }
 
 # 本体感知在 obs dict 里的 key
