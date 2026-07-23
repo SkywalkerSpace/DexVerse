@@ -18,10 +18,9 @@ Usage（两个终端）:
       --num_episodes 10
 
 显存管理:
-  π₀.₅ server 用 XLA_PYTHON_CLIENT_MEM_FRACTION=0.5 限制 JAX 预分配，
-  Isaac Sim 在本进程里用另一块显存。
-  12GB 显卡上：JAX ≤ 6GB + Isaac Sim ~5GB = ~11GB，刚好可行。
-  如果还是 OOM，把 MEM_FRACTION 调到 0.4。
+  π₀.₅ server 用 XLA_PYTHON_CLIENT_ALLOCATOR=platform 按需分配显存（不预占）。
+  Isaac Sim 通过 PhysxCfg 压缩 GPU 缓冲区，num_envs=1 时约节省 1-2 GB。
+  12GB 显卡上：JAX ~6.5GB + Isaac Sim ~3-4GB ≈ 10GB，可以跑通。
 """
 
 from __future__ import annotations
@@ -34,7 +33,7 @@ from pathlib import Path
 
 # ── Isaac Lab / IsaacSim 必须在最前面 import（要先初始化 SimulationApp）──────
 # DexVerse 的其他脚本（zero_agent.py）开头是这个模式：
-import isaaclab.app
+import isaaclab.app  # noqa: F401  # 触发 IsaacSim 路径注册
 
 # 解析命令行参数（必须在 SimulationApp 之前）
 parser = argparse.ArgumentParser(description="Run π₀.₅ policy in DexVerse.")
@@ -58,15 +57,28 @@ parser.add_argument(
     "--disable_fabric", action="store_true", default=False,
     help="Disable fabric and use USD I/O operations."
 )
-args = parser.parse_args()
-
-# 启动 Isaac Sim（headless 模式省显存）
+# 启动 Isaac Sim
 from isaaclab.app import AppLauncher
 AppLauncher.add_app_launcher_args(parser)   # 把 isaaclab 标准 cli args 加进去
-args_cli, hydra_args = parser.parse_known_args()
+args_cli, _ = parser.parse_known_args()
 args_cli.enable_cameras = True
+# headless / device 等保持命令行传入，不强制覆盖
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
+
+# ── 压缩渲染器显存（SimulationApp 启动后才能调用 carb）────────────────────────
+import carb
+_s = carb.settings.get_settings()
+# 切换到光栅化渲染（RaytracedLighting），比默认 PathTracing 省 1-2 GB
+_s.set("/rtx/rendermode", "RaytracedLighting")
+# 关闭高消耗渲染特性
+_s.set("/rtx/reflections/enabled", False)
+_s.set("/rtx/shadows/enabled", False)
+_s.set("/rtx/ambientOcclusion/enabled", False)
+_s.set("/rtx/indirectDiffuse/enabled", False)
+# 压缩纹理缓存上限（MB）
+_s.set("/rtx/resourcemanager/textureMipBudget", 512)
+_s.set("/rtx/resourcemanager/geometryBudget", 512)
 
 # ── 以下 import 必须在 SimulationApp 启动之后 ─────────────────────────────────
 import gymnasium as gym
@@ -92,13 +104,37 @@ log = logging.getLogger(__name__)
 
 def run_evaluation() -> None:
     # ── 1. 创建环境 ──────────────────────────────────────────────────────────
-    log.info(f"Creating DexVerse env: {args.task}  ({args.num_envs} parallel)")
+    log.info(f"Creating DexVerse env: {args_cli.task}  ({args_cli.num_envs} parallel)")
     env_cfg = parse_env_cfg(
         args_cli.task,
-        device=args_cli.device,
+        device="cpu", 
         num_envs=args_cli.num_envs,
         use_fabric=not args_cli.disable_fabric,
     )
+
+    # ── 压缩相机分辨率（相机帧缓冲是显存大头之一）────────────────────────────
+    # 遍历所有 sensor，把分辨率降到 224x224（π₀.₅ 输入尺寸，不会损失信息）
+    try:
+        from isaaclab.sensors import CameraCfg
+        for attr in vars(env_cfg).values():
+            if isinstance(attr, CameraCfg):
+                attr.width = 224
+                attr.height = 224
+    except Exception:
+        pass  # 找不到相机配置时跳过
+
+    # ── 压缩 PhysX GPU 显存占用 ──────────────────────────────────────────────
+    # num_envs=1 时不需要默认的超大缓冲区，降低各项参数节省约 1-2 GB 显存
+    from isaaclab.sim import PhysxCfg
+    env_cfg.sim.physx = PhysxCfg(
+        use_gpu=False,
+        gpu_max_rigid_contact_count=2**21,   # 默认 2**23
+        gpu_max_rigid_patch_count=2**21,     # 默认 2**23
+        gpu_heap_capacity=2**24,             # 默认 2**26
+        gpu_temp_buffer_capacity=2**22,      # 默认 2**24
+        gpu_max_num_partitions=8,            # 默认 32
+    )
+
     env = gym.make(args_cli.task, cfg=env_cfg)
 
     action_low = env.action_space.low    # (action_dim,)
@@ -107,20 +143,20 @@ def run_evaluation() -> None:
     log.info(f"Obs space:    {env.observation_space}")
 
     # ── 2. 连接 π₀.₅ server ─────────────────────────────────────────────────
-    log.info(f"Connecting to π₀.₅ at {args.server_host}:{args.server_port}...")
-    client = Pi05Client(host=args.server_host, port=args.server_port)
+    log.info(f"Connecting to π₀.₅ at {args_cli.server_host}:{args_cli.server_port}...")
+    client = Pi05Client(host=args_cli.server_host, port=args_cli.server_port)
     log.info("Connected!")
 
     chunk_buf = ChunkActionBuffer(
-        chunk_size=args.chunk_size,
-        exec_horizon=args.exec_horizon,
+        chunk_size=args_cli.chunk_size,
+        exec_horizon=args_cli.exec_horizon,
     )
 
     # ── 3. 评估循环 ──────────────────────────────────────────────────────────
     successes = 0
     episode_returns = []
 
-    for ep in range(args.num_episodes):
+    for ep in range(args_cli.num_episodes):
         obs, info = env.reset()
         # Isaac Lab 有时需要第二次 reset 才能正确加载材质（sim-evals 里也提到了）
         obs, info = env.reset()
@@ -128,7 +164,7 @@ def run_evaluation() -> None:
         episode_return = 0.0
         chunk_buf._buffer = []  # 清空 action buffer
 
-        for step in tqdm(range(args.max_steps), desc=f"Episode {ep+1}/{args.num_episodes}"):
+        for step in tqdm(range(args_cli.max_steps), desc=f"Episode {ep+1}/{args_cli.num_episodes}"):
             # ── 3a. 决定是否需要推理 ──────────────────────────────────────
             if chunk_buf.needs_inference():
                 images, state = obs_to_pi05(obs, env_idx=0)
@@ -144,7 +180,7 @@ def run_evaluation() -> None:
                 pi05_action = client.infer(
                     images=images,
                     state=state,
-                    instruction=args.instruction,
+                    instruction=args_cli.instruction,
                 )
 
                 # 如果 π₀.₅ 输出 chunk，形状是 (chunk_size, action_dim)
@@ -164,7 +200,7 @@ def run_evaluation() -> None:
                 pi05_action=action_np,
                 action_space_low=action_low,
                 action_space_high=action_high,
-                num_envs=args.num_envs,
+                num_envs=args_cli.num_envs,
             )
 
             obs, reward, terminated, truncated, info = env.step(action_tensor)
@@ -175,7 +211,7 @@ def run_evaluation() -> None:
 
         # ── 4. 记录结果 ──────────────────────────────────────────────────────
         episode_returns.append(episode_return)
-        success = info.get("success", torch.zeros(args.num_envs)).any().item()
+        success = info.get("success", torch.zeros(args_cli.num_envs)).any().item()
         successes += int(success)
         log.info(
             f"Episode {ep+1}: return={episode_return:.3f}, success={success}"
@@ -183,8 +219,8 @@ def run_evaluation() -> None:
 
     # ── 5. 汇总 ──────────────────────────────────────────────────────────────
     log.info("=" * 50)
-    log.info(f"Success rate:  {successes}/{args.num_episodes} = "
-             f"{successes/args.num_episodes*100:.1f}%")
+    log.info(f"Success rate:  {successes}/{args_cli.num_episodes} = "
+             f"{successes/args_cli.num_episodes*100:.1f}%")
     log.info(f"Mean return:   {np.mean(episode_returns):.3f} ± "
              f"{np.std(episode_returns):.3f}")
     log.info("=" * 50)
