@@ -127,7 +127,6 @@ def run_evaluation() -> None:
     # num_envs=1 时不需要默认的超大缓冲区，降低各项参数节省约 1-2 GB 显存
     from isaaclab.sim import PhysxCfg
     env_cfg.sim.physx = PhysxCfg(
-        use_gpu=False,
         gpu_max_rigid_contact_count=2**21,   # 默认 2**23
         gpu_max_rigid_patch_count=2**21,     # 默认 2**23
         gpu_heap_capacity=2**24,             # 默认 2**26
