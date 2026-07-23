@@ -69,16 +69,15 @@ def pi05_action_to_dexverse(
 
 JOINT_ORDER = list(range(29, 58)) + list(range(0, 29))  # 示例，必须按你实际打印结果改
 
-def _remap_joints(action: np.ndarray) -> np.ndarray:
-    """
-    如果 π₀.₅ 和 DexVerse 的关节顺序不一致，在这里做 permutation。
-    默认直接返回（假设顺序一致）。
-
-    Example（如果需要重排）：
-        JOINT_ORDER = [2, 0, 1, 5, 3, 4, ...]  # 你的映射
-        return action[JOINT_ORDER]
-    """
-    return action[JOINT_ORDER]
+# 在 action_adapter.py 大约 80 行的位置：
+def _remap_joints(action):
+    # 临时修正：假设原数组是 1-based 的，强制全体减 1 转为 0-based
+    corrected_order = [idx - 1 for idx in JOINT_ORDER]
+    
+    # 或者如果只是个别越界，强制裁剪（仅用于 debug 防崩溃）：
+    corrected_order = [min(idx, 55) for idx in JOINT_ORDER]
+    
+    return action[corrected_order]
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Chunk action 处理（如果 π₀.₅ 一次输出多步 action，即 action chunk）
