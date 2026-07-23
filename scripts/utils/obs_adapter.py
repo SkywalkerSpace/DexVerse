@@ -24,7 +24,7 @@ import torch
 
 # constants.py
 ARM_DOF = 7          # 改成你的手臂 DOF
-HAND_DOF = 22         # 改成你的单手 DOF（Shadow Hand 常见 20~24）
+HAND_DOF = 21         # 改成你的单手 DOF（Shadow Hand 常见 20~24）
 ACTION_DIM = 2 * (ARM_DOF + HAND_DOF)   # 双臂双手总维度
 
 
