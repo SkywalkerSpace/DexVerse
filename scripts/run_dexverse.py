@@ -119,6 +119,7 @@ for art in env.unwrapped.scene.articulations.values():
 
 if "robot" in env.unwrapped.scene.articulations:
     robot = env.unwrapped.scene.articulations["robot"]
+    print(robot.joint_names)
     cur = robot.data.joint_pos[0].detach().cpu()
     ref = robot.data.default_joint_pos[0].detach().cpu()
     max_abs_err = torch.max(torch.abs(cur - ref)).item()

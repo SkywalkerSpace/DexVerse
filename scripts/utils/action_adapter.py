@@ -23,6 +23,12 @@ import numpy as np
 import torch
 
 
+# constants.py
+ARM_DOF = 7          # 改成你的手臂 DOF
+HAND_DOF = 22         # 改成你的单手 DOF（Shadow Hand 常见 20~24）
+ACTION_DIM = 2 * (ARM_DOF + HAND_DOF)   # 双臂双手总维度
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # 修改这两个值以匹配你的实际配置
 # ──────────────────────────────────────────────────────────────────────────────
@@ -47,19 +53,21 @@ def pi05_action_to_dexverse(
     """
 
     # flatten：(1, 56) → (56,)，再取前 PI05_ACTION_DIM 维
-    low  = action_space_low.flatten()[:PI05_ACTION_DIM]
-    high = action_space_high.flatten()[:PI05_ACTION_DIM]
+    low  = action_space_low.flatten()[:ACTION_DIM]
+    high = action_space_high.flatten()[:ACTION_DIM]
 
     action_reordered = _remap_joints(pi05_action)
     action_clipped   = np.clip(action_reordered, low, high)
 
     # 不足 56 维时，其余关节用 0 填充
     full_action = np.zeros(action_space_low.flatten().shape, dtype=np.float32)
-    full_action[:PI05_ACTION_DIM] = action_clipped
+    full_action[:ACTION_DIM] = action_clipped
 
     action_batch = np.tile(full_action[None, :], (num_envs, 1))
     return torch.from_numpy(action_batch).float()
 
+
+JOINT_ORDER = list(range(29, 58)) + list(range(0, 29))  # 示例，必须按你实际打印结果改
 
 def _remap_joints(action: np.ndarray) -> np.ndarray:
     """
@@ -70,8 +78,7 @@ def _remap_joints(action: np.ndarray) -> np.ndarray:
         JOINT_ORDER = [2, 0, 1, 5, 3, 4, ...]  # 你的映射
         return action[JOINT_ORDER]
     """
-    return action
-
+    return action[JOINT_ORDER]
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Chunk action 处理（如果 π₀.₅ 一次输出多步 action，即 action chunk）

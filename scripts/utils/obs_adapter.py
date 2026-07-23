@@ -22,6 +22,12 @@ import numpy as np
 import torch
 
 
+# constants.py
+ARM_DOF = 7          # 改成你的手臂 DOF
+HAND_DOF = 22         # 改成你的单手 DOF（Shadow Hand 常见 20~24）
+ACTION_DIM = 2 * (ARM_DOF + HAND_DOF)   # 双臂双手总维度
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # 你需要在 DexVerse task config 里开启相机观测。
 # 参考 source/dexverse/dexverse/tasks/ 下某个任务的 *Cfg 类，添加：
@@ -109,7 +115,7 @@ def obs_to_pi05(
     prop = obs[PROPRIOCEPTION_KEY][env_idx]  # (obs_dim,)
     state = prop.cpu().numpy().astype(np.float32)
 
-    state = state[:14]
+    state = state[:ACTION_DIM]
 
     return images, state
 
