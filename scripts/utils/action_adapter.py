@@ -56,8 +56,21 @@ def pi05_action_to_dexverse(
     low  = action_space_low.flatten()[:ACTION_DIM]
     high = action_space_high.flatten()[:ACTION_DIM]
 
-    action_reordered = _remap_joints(pi05_action)
-    action_clipped   = np.clip(action_reordered, low, high)
+    # 在 line 60 附近修改代码：
+
+    # 假设你的环境标准总自由度是 56 维
+    TARGET_DOF = 56
+
+    # 如果 action_reordered 长度超了或者不对，强制切到 56 维再做 clip
+    if action_reordered.shape[-1] > TARGET_DOF:
+        action_reordered = action_reordered[..., :TARGET_DOF]
+    elif action_reordered.shape[-1] < TARGET_DOF:
+        # 如果不足 56 维则补零
+        pad_width = TARGET_DOF - action_reordered.shape[-1]
+        action_reordered = np.pad(action_reordered, ((0, pad_width),) if action_reordered.ndim == 1 else ((0, 0), (0, pad_width)), mode='constant')
+
+    # 此时两边形状就完全一致了 (都是 56)，可以安全 clip
+    action_clipped = np.clip(action_reordered, low, high)
 
     # 不足 56 维时，其余关节用 0 填充
     full_action = np.zeros(action_space_low.flatten().shape, dtype=np.float32)
