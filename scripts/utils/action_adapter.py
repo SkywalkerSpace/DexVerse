@@ -60,6 +60,7 @@ def pi05_action_to_dexverse(
 
     # 假设你的环境标准总自由度是 56 维
     TARGET_DOF = 56
+    action_reordered = _remap_joints(pi05_action)
 
     # 如果 action_reordered 长度超了或者不对，强制切到 56 维再做 clip
     if action_reordered.shape[-1] > TARGET_DOF:
